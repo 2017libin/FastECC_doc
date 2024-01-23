@@ -22,6 +22,51 @@ ECC优化 学习笔记
 
 相应分量带进位的加减操作
 
+### 1.2.1 加法
+
+1. 参考：GmSSL-sm2_alg.c
+
+```c
+static void sm2_bn288_add(uint64_t r[9], const uint64_t a[9], const uint64_t b[9])
+{
+	int i;
+	r[0] = a[0] + b[0];
+	for (i = 1; i < 9; i++) {
+		r[i] = a[i] + b[i] + (r[i-1] >> 32);
+	}
+	for (i = 0; i < 8; i++) {
+		r[i] &= 0xffffffff;
+	}
+}
+```
+
+### 1.2.2 减法
+
+1. 参考：GmSSL-sm2_alg.c
+
+```c
+static void sm2_bn288_sub(uint64_t ret[9], const uint64_t a[9], const uint64_t b[9])
+{
+	int i;
+	uint64_t r[9];
+
+	// 借1
+	r[0] = ((uint64_t)1 << 32) + a[0] - b[0];
+	// 借完1后剩下0xffffffff，但是有可能上一轮不需要1，因此加上(r[i - 1] >> 32)
+	for (i = 1; i < 8; i++) {
+		r[i] = 0xffffffff + a[i] - b[i] + (r[i - 1] >> 32);
+		r[i - 1] &= 0xffffffff;
+	}
+	// 借完1后减去1，但是有可能上一轮不需要1，因此加上(r[i - 1] >> 32)
+	r[i] = a[i] - b[i] + (r[i - 1] >> 32) - 1;
+	r[i - 1] &= 0xffffffff;
+
+	for (i = 0; i < 9; i++) {
+		ret[i] = r[i];
+	}
+}
+```
+
 ## 1.3 乘法
 
 ### 1.3.1 教科书方法
@@ -98,9 +143,62 @@ ECC优化 学习笔记
 
 ### 1.4.2 Barrett规约
 
-![image-20230920214345456](img/ECC优化_学习笔记/image-20230920214345456.png)
+1. 原理：计算一个近似的除数$e'$，并计算$c'=d-e'\times N$，最后通过$c=c'-kN$求出$c$
+2. 分析：
+   1. 输入$d=a\times b$和$N$，计算 $c = a\times b\ mod\ N$
+   2. 存在e满足：$d=a\times b=eN+c$
+   3. 目标：求出e，并通过$d=a\times b-eN$计算$c$
+   4. 问题是，e不好求，但是e的近似值$e'=\lfloor d/N \rfloor$容易求
+      1. $e'=\lfloor d/N \rfloor \approx \lfloor(d\times2^{2n}/N)/2^{2n}\rfloor\approx \lfloor(\lfloor d/2^{n}\rfloor \times2^{2n}/N)/2^{n}\rfloor$，其中$n$表示N的比特长度，$\lfloor d/2^{n}\rfloor$等价于$d>>n$
+      2. 预计算 $u=2^{2n}/N$
+      3. 计算$e'$的过程
+         1. $c=d >> n$
+         2. $c=c\times u$
+         3. $c=c>>n$
+3. barrett算法的过程
+   1. 计算e'
+   2. 计算d'=e'*N
+   3. 计算c=d - e'*N
+   4. 如果c>N，那么c-=N
+   5. 返回c
+4. 对于sm2_N来说，u刚好为257比特，因此拆成了u=u[255:0]+2^256
+   1. 下图的算法3，模数就是为sm2_N的情况
 
 ![image-20230920214340808](img/ECC优化_学习笔记/image-20230920214340808.png)
+
+```python
+MAX = 0
+def barrett(a, b):
+    global MAX
+    n = 256
+    N = 0x8542D69E4C044F18E8B92435BF6FF7DD297720630485628D5AE74EE7C32E79B7
+    u1 = 0xebc9563c60576bb99de7a14155fb561c0c5ddb2eabdad96ba06cd2ff7f30f1bb
+    d = a * b
+    e1 = u1 * (d >> n)
+    e2 = (d >> n) << 256
+    e = (e1 + e2) >> n
+    c = d - e*N
+    subcount = 0
+    while c > N:
+        subcount += 1
+        # print(subcount)
+        c = c - N
+    MAX = max(MAX, subcount)
+    assert c < N
+    assert c == d%N
+
+def test_barrett(count):
+    N = 0x8542D69E4C044F18E8B92435BF6FF7DD297720630485628D5AE74EE7C32E79B7
+    for _ in range(count):
+        x = random.randint(1, N)
+        y = random.randint(1, N)
+        barrett(x, y)
+    print(MAX)
+
+if __name__ == "__main__":
+    test_barrett(1000000)
+
+```
 
 ### 1.4.3 快速模约减算法
 
