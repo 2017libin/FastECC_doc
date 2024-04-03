@@ -1,9 +1,11 @@
 ECC优化 学习笔记
 
-# 一. 域运算优化
-## 1.1 数据结构
+# 大整数运算优化
 
-### 1.1.1 256比特的大整数
+# 一. 域运算优化
+## 1. 数据结构
+
+### 1.1 256比特的大整数
 
 1. 使用数组表示一个大整数，即256比特的数可以表示为`uint64_t n[4]`，也可以表示为`uint32_t n[8]`
 
@@ -18,11 +20,11 @@ ECC优化 学习笔记
    } secp256k1_scalar;
    ```
 
-## 1.2 加/减法
+## 2. 加/减法
 
 相应分量带进位的加减操作
 
-### 1.2.1 加法
+### 2.1 加法
 
 1. 参考：GmSSL-sm2_alg.c
 
@@ -40,7 +42,7 @@ static void sm2_bn288_add(uint64_t r[9], const uint64_t a[9], const uint64_t b[9
 }
 ```
 
-### 1.2.2 减法
+### 2.2 减法
 
 1. 参考：GmSSL-sm2_alg.c
 
@@ -67,13 +69,13 @@ static void sm2_bn288_sub(uint64_t ret[9], const uint64_t a[9], const uint64_t b
 }
 ```
 
-## 1.3 乘法
+## 3. 乘法
 
-### 1.3.1 教科书方法
+### 3.1 教科书方法
 
-### 1.3.2 Karatsuba乘法
+### 3.2 Karatsuba乘法
 
-### 1.3.3 Montgomery乘法
+### 3.3 Montgomery乘法
 
 >需要将结果从蒙哥马利域转到实数域，计算效率较低
 >
@@ -104,7 +106,7 @@ static void sm2_bn288_sub(uint64_t ret[9], const uint64_t a[9], const uint64_t b
 
 ![image-20231004213226897](img/ECC优化_学习笔记/image-20231004213226897.png)
 
-### 1.3 二进制的蒙哥马利乘法
+### 3.4 二进制的蒙哥马利乘法
 
 > 对硬件友好的计算方法
 
@@ -121,9 +123,9 @@ static void sm2_bn288_sub(uint64_t ret[9], const uint64_t a[9], const uint64_t b
 
 ![image-20231005153915008](img/ECC优化_学习笔记/image-20231005153915008.png)
 
-### 1.3.4 RNS表示下的并行乘法
+### 3.5 RNS表示下的并行乘法
 
-### 1.3.5 KOA算法
+### 3.6 KOA算法
 
 > KOA算法使用的是分治的方法
 >
@@ -139,9 +141,9 @@ static void sm2_bn288_sub(uint64_t ret[9], const uint64_t a[9], const uint64_t b
 
 > 其实就是取模运算，但是使用减法而不是除法来取模，所以也叫做约减
 
-### 1.4.1 普通规约（classical）
+### 4.1 普通规约（classical）
 
-### 1.4.2 Barrett规约
+### 4.2 Barrett规约
 
 1. 原理：计算一个近似的除数$e'$，并计算$c'=d-e'\times N$，最后通过$c=c'-kN$求出$c$
 2. 分析：
@@ -167,17 +169,43 @@ static void sm2_bn288_sub(uint64_t ret[9], const uint64_t a[9], const uint64_t b
 ![image-20230920214340808](img/ECC优化_学习笔记/image-20230920214340808.png)
 
 ```python
+import random
+
 MAX = 0
+N = 0x8542D69E4C044F18E8B92435BF6FF7DD297720630485628D5AE74EE7C32E79B7
+
+
+
+def print_hex(pre, a):
+    print(pre, hex(a))
 def barrett(a, b):
     global MAX
     n = 256
-    N = 0x8542D69E4C044F18E8B92435BF6FF7DD297720630485628D5AE74EE7C32E79B7
     u1 = 0xebc9563c60576bb99de7a14155fb561c0c5ddb2eabdad96ba06cd2ff7f30f1bb
+    
+    # debug
+    a = 0x7ed8740e8254b187d26b345cb9869c3d3cb875791aa6ce4840cab74436c67f2b
+    b = 0x61c97560c37059038c29ceb1d29c88cdf70f9a5ef0962a9ca1e0762d15a00478
     d = a * b
+    print_hex("a", a)
+    print_hex("b", b)
+    print_hex("d", d)
+
     e1 = u1 * (d >> n)
+    print_hex("e1", e1)
+
     e2 = (d >> n) << 256
+    print_hex("e2", e2)
+
     e = (e1 + e2) >> n
-    c = d - e*N
+    print_hex("e", e)
+
+    eN = e*N
+    print_hex("eN", eN)
+
+    c = d - eN
+    print_hex("c", c)
+
     subcount = 0
     while c > N:
         subcount += 1
@@ -188,7 +216,6 @@ def barrett(a, b):
     assert c == d%N
 
 def test_barrett(count):
-    N = 0x8542D69E4C044F18E8B92435BF6FF7DD297720630485628D5AE74EE7C32E79B7
     for _ in range(count):
         x = random.randint(1, N)
         y = random.randint(1, N)
@@ -196,11 +223,13 @@ def test_barrett(count):
     print(MAX)
 
 if __name__ == "__main__":
-    test_barrett(1000000)
-
+    test_barrett(1)
+    a = 0xbe5fa96dcf25eab7
+    b = 0x147583e85be6b757
+    print(hex(a-b+2**64-1))
 ```
 
-### 1.4.3 快速模约减算法
+### 4.3 快速模约减算法
 
 > 如果模数为梅森素数，可以快速对512比特的数进行求模
 >
@@ -208,7 +237,7 @@ if __name__ == "__main__":
 
 在SM2中，点运算涉及的取模运算可以通过快速模约减算法实现
 
-### 1.4.4 基于查表的模规约运算
+### 4.4 基于查表的模规约运算
 
 A Fast Modular Reduction Method
 
@@ -237,7 +266,7 @@ A Fast Modular Reduction Method
 
 ### 7.2 Tonelli-shanks算法
 
-# 二. 曲线运算优化
+# 二. 椭圆曲线运算优化
 
 # 三. 协议层优化
 
@@ -248,5 +277,3 @@ A Fast Modular Reduction Method
 # 四. 配对运算优化
 
 # 五. 抗侧信道手段
-
-# 六. 常见密码库的优化
